@@ -1,0 +1,11 @@
+../Core/Src/sensor_manager.c:61:6:Sensor_Init	1
+../Core/Src/sensor_manager.c:81:6:Sensor_SetActive	2
+../Core/Src/sensor_manager.c:92:9:Sensor_IsActive	1
+../Core/Src/sensor_manager.c:104:9:Sensor_GetActualHeight	1
+../Core/Src/sensor_manager.c:109:9:Sensor_GetSlide	1
+../Core/Src/sensor_manager.c:137:6:Sensor_ParsePacket	1
+../Core/Src/sensor_manager.c:206:6:Sensor_UpdateDisplay	3
+../Core/Src/sensor_manager.c:224:6:Sensor_ProcessKeys	8
+../Core/Src/sensor_manager.c:258:6:Sensor_LoadTestPage	5
+../Core/Src/sensor_manager.c:294:13:increaseValue	7
+../Core/Src/sensor_manager.c:308:13:decreaseValue	13

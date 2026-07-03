@@ -1,0 +1,8 @@
+../Core/Src/action_comm.c:32:6:ACTION_COMM_Init	1
+../Core/Src/action_comm.c:55:6:ACTION_SetScreenUart	1
+../Core/Src/action_comm.c:64:13:SendPacket	4
+../Core/Src/action_comm.c:80:6:ACTION_SendCommand	1
+../Core/Src/action_comm.c:101:6:ACTION_SendMemory	5
+../Core/Src/action_comm.c:117:6:ACTION_SendGoBackLevel	1
+../Core/Src/action_comm.c:128:6:HAL_UART_RxCpltCallback	9
+../Core/Src/action_comm.c:169:6:HAL_UART_ErrorCallback	2
