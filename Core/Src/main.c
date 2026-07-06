@@ -40,6 +40,8 @@
 /* Private variables ---------------------------------------------------------*/
 CAN_HandleTypeDef hcan;
 
+I2C_HandleTypeDef hi2c1;
+
 UART_HandleTypeDef huart1;
 UART_HandleTypeDef huart2;
 UART_HandleTypeDef huart3;
@@ -73,6 +75,7 @@ static void MX_CAN_Init(void);
 static void MX_USART1_UART_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_USART3_UART_Init(void);
+static void MX_I2C1_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -93,28 +96,29 @@ int main(void)
 
   /* USER CODE END 1 */
 
+  /* MCU Configuration--------------------------------------------------------*/
+
+  /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
   HAL_Init();
 
   /* USER CODE BEGIN Init */
 
   /* USER CODE END Init */
 
+  /* Configure the system clock */
   SystemClock_Config();
 
   /* USER CODE BEGIN SysInit */
 
   /* USER CODE END SysInit */
 
-  /* ----------------------------------------------------------------
-   * Peripheral init — GPIO MUST come first so all pins are configured
-   * before any module tries to use them (relay, columns, rows, UARTs).
-   * ---------------------------------------------------------------- */
+  /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_CAN_Init();
   MX_USART1_UART_Init();
   MX_USART2_UART_Init();
   MX_USART3_UART_Init();
-
+  MX_I2C1_Init();
   /* USER CODE BEGIN 2 */
 
   /* ----------------------------------------------------------------
@@ -188,23 +192,7 @@ int main(void)
    * ---------------------------------------------------------------- */
   RTC_Init(&huart2);
   RTC_SetRandom();
-  /* --- Text box at VP 0x6A (spans 0x6A-0x6D = 8 bytes) --- */
-  /* Uppercase */
-  uint8_t tb1[14] = {0x5A,0xA5,0x0B,0x82,0x00,0x6A, 'R','E',' '};
-  HAL_UART_Transmit(&huart2, tb1, 14, HAL_MAX_DELAY);
-  HAL_Delay(1500);
-  /* Lowercase (padded with spaces to clear the box) */
-  uint8_t tb2[14] = {0x5A,0xA5,0x0B,0x82,0x00,0x6A, 'n','o','r',' '};
-  HAL_UART_Transmit(&huart2, tb2, 14, HAL_MAX_DELAY);
-  HAL_Delay(1500);
-  /* Digits */
-  uint8_t tb3[14] = {0x5A,0xA5,0x0B,0x82,0x00,0x6A, '1','2','3'};
-  HAL_UART_Transmit(&huart2, tb3, 14, HAL_MAX_DELAY);
-  HAL_Delay(1500);
-  /* Special characters */
-  uint8_t tb4[14] = {0x5A,0xA5,0x0B,0x82,0x00,0x6A, '!','@','#'};
-  HAL_UART_Transmit(&huart2, tb4, 14, HAL_MAX_DELAY);
-  HAL_Delay(1500);
+
 #ifdef REVERSE_RTC_SELFTEST
   /* ================================================================
    * REVERSE + RTC SELF-TEST  (line-by-line / Live Expressions)
@@ -235,6 +223,7 @@ int main(void)
 
   /* USER CODE END 2 */
 
+  /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
@@ -259,6 +248,9 @@ void SystemClock_Config(void)
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
 
+  /** Initializes the RCC Oscillators according to the specified parameters
+  * in the RCC_OscInitTypeDef structure.
+  */
   RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
   RCC_OscInitStruct.HSIState = RCC_HSI_ON;
   RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
@@ -270,6 +262,8 @@ void SystemClock_Config(void)
     Error_Handler();
   }
 
+  /** Initializes the CPU, AHB and APB buses clocks
+  */
   RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
                               |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
   RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
@@ -285,23 +279,12 @@ void SystemClock_Config(void)
 
 /**
   * @brief CAN Initialization Function
-  * ---------------------------------------------------------------
-  * FIX: Previous config (BS1=1, BS2=1, SJW=1, Pre=16) = 3 TQ total
-  * which is INVALID — CAN spec requires min 8 TQ. HAL_CAN_Init()
-  * returns HAL_ERROR → Error_Handler() → HardFault.
-  *
-  * Corrected for 64 MHz SYSCLK, APB1 = 32 MHz, CAN target = 250 kbit/s:
-  *   TQ = 1 / (32 MHz / Prescaler) = 1 / (32M / 8) = 250 ns
-  *   Bit time = (1 + BS1 + BS2) TQ = (1 + 11 + 4) × 250 ns = 4 µs = 250 kbit/s
-  *   Sample point = (1 + 11) / 16 = 75%  ✓
-  *
-  * Change target rate here by adjusting Prescaler / BS1 / BS2:
-  *   500 kbit/s → Prescaler=4, BS1=11, BS2=4  (16 TQ, 32 MHz APB1)
-  *   1 Mbit/s  → Prescaler=2, BS1=11, BS2=4   (16 TQ, 32 MHz APB1)
-  * ---------------------------------------------------------------
+  * @param None
+  * @retval None
   */
 static void MX_CAN_Init(void)
 {
+
   /* USER CODE BEGIN CAN_Init 0 */
 
   /* USER CODE END CAN_Init 0 */
@@ -310,16 +293,16 @@ static void MX_CAN_Init(void)
 
   /* USER CODE END CAN_Init 1 */
   hcan.Instance = CAN1;
-  hcan.Init.Prescaler         = 8;            /* FIX: was 16 (invalid) */
-  hcan.Init.Mode              = CAN_MODE_NORMAL;
-  hcan.Init.SyncJumpWidth     = CAN_SJW_1TQ;
-  hcan.Init.TimeSeg1          = CAN_BS1_11TQ; /* FIX: was CAN_BS1_1TQ  */
-  hcan.Init.TimeSeg2          = CAN_BS2_4TQ;  /* FIX: was CAN_BS2_1TQ  */
+  hcan.Init.Prescaler = 16;
+  hcan.Init.Mode = CAN_MODE_NORMAL;
+  hcan.Init.SyncJumpWidth = CAN_SJW_1TQ;
+  hcan.Init.TimeSeg1 = CAN_BS1_1TQ;
+  hcan.Init.TimeSeg2 = CAN_BS2_1TQ;
   hcan.Init.TimeTriggeredMode = DISABLE;
-  hcan.Init.AutoBusOff        = DISABLE;
-  hcan.Init.AutoWakeUp        = DISABLE;
+  hcan.Init.AutoBusOff = DISABLE;
+  hcan.Init.AutoWakeUp = DISABLE;
   hcan.Init.AutoRetransmission = DISABLE;
-  hcan.Init.ReceiveFifoLocked  = DISABLE;
+  hcan.Init.ReceiveFifoLocked = DISABLE;
   hcan.Init.TransmitFifoPriority = DISABLE;
   if (HAL_CAN_Init(&hcan) != HAL_OK)
   {
@@ -328,6 +311,41 @@ static void MX_CAN_Init(void)
   /* USER CODE BEGIN CAN_Init 2 */
 
   /* USER CODE END CAN_Init 2 */
+
+}
+
+/**
+  * @brief I2C1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_I2C1_Init(void)
+{
+
+  /* USER CODE BEGIN I2C1_Init 0 */
+
+  /* USER CODE END I2C1_Init 0 */
+
+  /* USER CODE BEGIN I2C1_Init 1 */
+
+  /* USER CODE END I2C1_Init 1 */
+  hi2c1.Instance = I2C1;
+  hi2c1.Init.ClockSpeed = 100000;
+  hi2c1.Init.DutyCycle = I2C_DUTYCYCLE_2;
+  hi2c1.Init.OwnAddress1 = 0;
+  hi2c1.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
+  hi2c1.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
+  hi2c1.Init.OwnAddress2 = 0;
+  hi2c1.Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
+  hi2c1.Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;
+  if (HAL_I2C_Init(&hi2c1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN I2C1_Init 2 */
+
+  /* USER CODE END I2C1_Init 2 */
+
 }
 
 /**
@@ -337,6 +355,7 @@ static void MX_CAN_Init(void)
   */
 static void MX_USART1_UART_Init(void)
 {
+
   /* USER CODE BEGIN USART1_Init 0 */
 
   /* USER CODE END USART1_Init 0 */
@@ -359,6 +378,7 @@ static void MX_USART1_UART_Init(void)
   /* USER CODE BEGIN USART1_Init 2 */
 
   /* USER CODE END USART1_Init 2 */
+
 }
 
 /**
@@ -368,6 +388,7 @@ static void MX_USART1_UART_Init(void)
   */
 static void MX_USART2_UART_Init(void)
 {
+
   /* USER CODE BEGIN USART2_Init 0 */
 
   /* USER CODE END USART2_Init 0 */
@@ -390,6 +411,7 @@ static void MX_USART2_UART_Init(void)
   /* USER CODE BEGIN USART2_Init 2 */
 
   /* USER CODE END USART2_Init 2 */
+
 }
 
 /**
@@ -399,6 +421,7 @@ static void MX_USART2_UART_Init(void)
   */
 static void MX_USART3_UART_Init(void)
 {
+
   /* USER CODE BEGIN USART3_Init 0 */
 
   /* USER CODE END USART3_Init 0 */
@@ -407,7 +430,7 @@ static void MX_USART3_UART_Init(void)
 
   /* USER CODE END USART3_Init 1 */
   huart3.Instance = USART3;
-  huart3.Init.BaudRate = 9600;
+  huart3.Init.BaudRate = 115200;
   huart3.Init.WordLength = UART_WORDLENGTH_8B;
   huart3.Init.StopBits = UART_STOPBITS_1;
   huart3.Init.Parity = UART_PARITY_NONE;
@@ -421,6 +444,7 @@ static void MX_USART3_UART_Init(void)
   /* USER CODE BEGIN USART3_Init 2 */
 
   /* USER CODE END USART3_Init 2 */
+
 }
 
 /**
@@ -435,51 +459,43 @@ static void MX_GPIO_Init(void)
 
   /* USER CODE END MX_GPIO_Init_1 */
 
-  /* ----------------------------------------------------------------
-   * Enable ALL port clocks FIRST — before any HAL_GPIO_WritePin or
-   * HAL_GPIO_Init call. Missing a clock enable = writes go nowhere.
-   * ---------------------------------------------------------------- */
+  /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOD_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
-  /* Output levels — all LOW at init (relay stays off until RELAY_SET(1)) */
-  HAL_GPIO_WritePin(GPIOA, RELAY_Pin|C1_Pin|C2_Pin|C3_Pin|C4_Pin, GPIO_PIN_RESET);
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOA, RELAY_Pin|C1_Pin|C2_Pin|C3_Pin
+                          |C4_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOB, C5_Pin|C6_Pin|C7_Pin, GPIO_PIN_RESET);
 
-  /* ----------------------------------------------------------------
-   * RELAY_Pin (PA1) — push-pull, no pull, low speed
-   * Configured SEPARATELY so speed/pull settings are explicit.
-   * ---------------------------------------------------------------- */
-  GPIO_InitStruct.Pin   = RELAY_Pin;
-  GPIO_InitStruct.Mode  = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull  = GPIO_NOPULL;
+  /*Configure GPIO pins : RELAY_Pin C1_Pin C2_Pin C3_Pin
+                           C4_Pin */
+  GPIO_InitStruct.Pin = RELAY_Pin|C1_Pin|C2_Pin|C3_Pin
+                          |C4_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
-  /* Column outputs PA4-PA7 (C1-C4) — push-pull, no pull */
-  GPIO_InitStruct.Pin   = C1_Pin|C2_Pin|C3_Pin|C4_Pin;
-  GPIO_InitStruct.Mode  = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull  = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-
-  /* Column outputs PB0-PB2 (C5-C7) — push-pull, no pull */
-  GPIO_InitStruct.Pin   = C5_Pin|C6_Pin|C7_Pin;
-  GPIO_InitStruct.Mode  = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull  = GPIO_NOPULL;
+  /*Configure GPIO pins : C5_Pin C6_Pin C7_Pin */
+  GPIO_InitStruct.Pin = C5_Pin|C6_Pin|C7_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
-  /* Row inputs PB12-PB15 (R1-R4) — pull-down (active HIGH when pressed) */
-  GPIO_InitStruct.Pin  = R1_Pin|R2_Pin|R3_Pin|R4_Pin;
+  /*Configure GPIO pins : R1_Pin R2_Pin R3_Pin R4_Pin */
+  GPIO_InitStruct.Pin = R1_Pin|R2_Pin|R3_Pin|R4_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_PULLDOWN;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
-  /* Row input PA8 (R5) — pull-down */
-  GPIO_InitStruct.Pin  = R5_Pin;
+  /*Configure GPIO pin : R5_Pin */
+  GPIO_InitStruct.Pin = R5_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_PULLDOWN;
   HAL_GPIO_Init(R5_GPIO_Port, &GPIO_InitStruct);
@@ -506,8 +522,14 @@ void Error_Handler(void)
   }
   /* USER CODE END Error_Handler_Debug */
 }
-
 #ifdef USE_FULL_ASSERT
+/**
+  * @brief  Reports the name of the source file and the source line number
+  *         where the assert_param error has occurred.
+  * @param  file: pointer to the source file name
+  * @param  line: assert_param error line source number
+  * @retval None
+  */
 void assert_failed(uint8_t *file, uint32_t line)
 {
   /* USER CODE BEGIN 6 */

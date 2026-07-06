@@ -310,9 +310,9 @@ void LCD_TogglePower(void)
  * Reverse orientation
  * ------------------------------------------------------------------
  * 2-state toggle. Each call flips reverseMode (so MapReverse swaps the
- * motor/animation mapping) AND pushes the reverse indicator icon to the
- * DWIN at IA 0x6A. This is the SINGLE place the reverse icon is written,
- * so the button handler only has to call this one function.
+ * Trend / Reverse-Trend commands) AND pushes the reverse indicator icon
+ * to the DWIN at IA 0x6A. This is the SINGLE place the reverse icon is
+ * written, so the button handler only has to call this one function.
  *   press 1 -> reverseMode = 1 -> icon 0x6A = 1 (reversed)
  *   press 2 -> reverseMode = 0 -> icon 0x6A = 0 (normal)
  * ====================================================================== */
@@ -359,18 +359,22 @@ void LCD_ShowStartupSequence(void)
 
 /* ======================================================================
  * Command reverse-mapping
+ * ------------------------------------------------------------------
+ * The Trend axis reads INVERTED on the display at baseline, so in NORMAL
+ * mode (reverse OFF) we swap Trend <-> Reverse-Trend to make it correct.
+ * When reverse orientation is ON the commands pass through unchanged,
+ * which gives the intentionally reversed trend direction.
+ * Only Trend (0x03) / Reverse-Trend (0x04) are affected — every other
+ * motion (height, back, tilt, slide) is left untouched in both modes.
  * ====================================================================== */
 static uint8_t MapReverse(uint8_t cmd)
 {
-    if(!reverseMode) return cmd;
-    switch(cmd)
+    if(reverseMode) return cmd;   /* reverse ON  -> reversed trend         */
+    switch(cmd)                   /* reverse OFF -> corrected (swap 03/04)  */
     {
-    case 0x01: return 0x02;  case 0x02: return 0x01;
-    case 0x03: return 0x04;  case 0x04: return 0x03;
-    case 0x05: return 0x06;  case 0x06: return 0x05;
-    case 0x07: return 0x08;  case 0x08: return 0x07;
-    case 0x09: return 0x10;  case 0x10: return 0x09;
-    default: return cmd;
+    case 0x03: return 0x04;   /* Trend         -> Reverse Trend */
+    case 0x04: return 0x03;   /* Reverse Trend -> Trend         */
+    default:   return cmd;    /* everything else unaffected     */
     }
 }
 
