@@ -19,6 +19,11 @@ static uint8_t  stableCount[7][5] = {0};
 static uint32_t pressStart[7][5]  = {0};
 static uint8_t  longActive[7][5]  = {0};
 
+/* Reverse-orientation state (0 = normal, 1 = reversed).
+ * Exposed volatile so it can be watched in STM32CubeIDE Live Expressions.
+ * Stays in lockstep with lcd_hmi's reverseMode (both toggle together). */
+static volatile uint8_t g_reverseState = 0;
+
 /* ======================================================================
  * Combo latches
  * ------------------------------------------------------------------
@@ -56,12 +61,10 @@ static const uint8_t keyCmdCode[7][5] =
 };
 
 /* ======================================================================
- * FIX: port/pin lookup tables — STATIC CONST
+ * port/pin lookup tables — STATIC CONST
  * ------------------------------------------------------------------
- * Previously declared as local variables inside BUTTON_MATRIX_Scan()
- * on every call, consuming ~100 bytes of stack per call and causing
- * unnecessary churn. Moving to file-scope static const eliminates
- * the stack hit and the repeated initialisation.
+ * File-scope static const eliminates the per-call stack hit and the
+ * repeated initialisation that a local declaration would incur.
  * ====================================================================== */
 static GPIO_TypeDef* const col_port[7] =
 {
@@ -219,10 +222,23 @@ void BUTTON_MATRIX_Scan(void)
                 if(c == 4 && r == 3) { LCD_SetLock(1); continue; }
                 if(c == 4 && r == 0) { LCD_SetLock(0); continue; }
 
-                /* Reverse orientation — bypasses lock, not power */
+                /* --------------------------------------------------------
+                 * Reverse orientation — 2-state toggle (lock + power gated)
+                 *   press 1 -> reverse ENGAGED : icon 6A = 1, LCD reversed
+                 *   press 2 -> reverse NORMAL  : icon 6A = 0, LCD normal
+                 *
+                 * LCD_ToggleReverse() flips reverseMode AND pushes the
+                 * indicator icon to DWIN IA 0x6A internally, using the same
+                 * lcd_set_icon primitive as the proven test packet. The
+                 * local mirror g_reverseState is only for Live Expressions.
+                 * -------------------------------------------------------- */
                 if(c == 6 && r == 3)
                 {
-                    if(!LCD_IsLocked()) LCD_ToggleReverse();
+                    if(!LCD_IsLocked() && LCD_IsPowerOn())
+                    {
+                        g_reverseState ^= 1;   /* mirror for Live Expressions */
+                        LCD_ToggleReverse();   /* flips reverseMode + icon 0x6A */
+                    }
                     continue;
                 }
 

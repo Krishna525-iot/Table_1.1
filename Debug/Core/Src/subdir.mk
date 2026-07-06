@@ -9,6 +9,7 @@ C_SRCS += \
 ../Core/Src/button_matrix.c \
 ../Core/Src/lcd_hmi.c \
 ../Core/Src/main.c \
+../Core/Src/rtc_manager.c \
 ../Core/Src/sensor_manager.c \
 ../Core/Src/stm32f1xx_hal_msp.c \
 ../Core/Src/stm32f1xx_it.c \
@@ -21,6 +22,7 @@ OBJS += \
 ./Core/Src/button_matrix.o \
 ./Core/Src/lcd_hmi.o \
 ./Core/Src/main.o \
+./Core/Src/rtc_manager.o \
 ./Core/Src/sensor_manager.o \
 ./Core/Src/stm32f1xx_hal_msp.o \
 ./Core/Src/stm32f1xx_it.o \
@@ -33,6 +35,7 @@ C_DEPS += \
 ./Core/Src/button_matrix.d \
 ./Core/Src/lcd_hmi.d \
 ./Core/Src/main.d \
+./Core/Src/rtc_manager.d \
 ./Core/Src/sensor_manager.d \
 ./Core/Src/stm32f1xx_hal_msp.d \
 ./Core/Src/stm32f1xx_it.d \
@@ -48,7 +51,7 @@ Core/Src/%.o Core/Src/%.su Core/Src/%.cyclo: ../Core/Src/%.c Core/Src/subdir.mk
 clean: clean-Core-2f-Src
 
 clean-Core-2f-Src:
-	-$(RM) ./Core/Src/action_comm.cyclo ./Core/Src/action_comm.d ./Core/Src/action_comm.o ./Core/Src/action_comm.su ./Core/Src/button_matrix.cyclo ./Core/Src/button_matrix.d ./Core/Src/button_matrix.o ./Core/Src/button_matrix.su ./Core/Src/lcd_hmi.cyclo ./Core/Src/lcd_hmi.d ./Core/Src/lcd_hmi.o ./Core/Src/lcd_hmi.su ./Core/Src/main.cyclo ./Core/Src/main.d ./Core/Src/main.o ./Core/Src/main.su ./Core/Src/sensor_manager.cyclo ./Core/Src/sensor_manager.d ./Core/Src/sensor_manager.o ./Core/Src/sensor_manager.su ./Core/Src/stm32f1xx_hal_msp.cyclo ./Core/Src/stm32f1xx_hal_msp.d ./Core/Src/stm32f1xx_hal_msp.o ./Core/Src/stm32f1xx_hal_msp.su ./Core/Src/stm32f1xx_it.cyclo ./Core/Src/stm32f1xx_it.d ./Core/Src/stm32f1xx_it.o ./Core/Src/stm32f1xx_it.su ./Core/Src/syscalls.cyclo ./Core/Src/syscalls.d ./Core/Src/syscalls.o ./Core/Src/syscalls.su ./Core/Src/sysmem.cyclo ./Core/Src/sysmem.d ./Core/Src/sysmem.o ./Core/Src/sysmem.su ./Core/Src/system_stm32f1xx.cyclo ./Core/Src/system_stm32f1xx.d ./Core/Src/system_stm32f1xx.o ./Core/Src/system_stm32f1xx.su
+	-$(RM) ./Core/Src/action_comm.cyclo ./Core/Src/action_comm.d ./Core/Src/action_comm.o ./Core/Src/action_comm.su ./Core/Src/button_matrix.cyclo ./Core/Src/button_matrix.d ./Core/Src/button_matrix.o ./Core/Src/button_matrix.su ./Core/Src/lcd_hmi.cyclo ./Core/Src/lcd_hmi.d ./Core/Src/lcd_hmi.o ./Core/Src/lcd_hmi.su ./Core/Src/main.cyclo ./Core/Src/main.d ./Core/Src/main.o ./Core/Src/main.su ./Core/Src/rtc_manager.cyclo ./Core/Src/rtc_manager.d ./Core/Src/rtc_manager.o ./Core/Src/rtc_manager.su ./Core/Src/sensor_manager.cyclo ./Core/Src/sensor_manager.d ./Core/Src/sensor_manager.o ./Core/Src/sensor_manager.su ./Core/Src/stm32f1xx_hal_msp.cyclo ./Core/Src/stm32f1xx_hal_msp.d ./Core/Src/stm32f1xx_hal_msp.o ./Core/Src/stm32f1xx_hal_msp.su ./Core/Src/stm32f1xx_it.cyclo ./Core/Src/stm32f1xx_it.d ./Core/Src/stm32f1xx_it.o ./Core/Src/stm32f1xx_it.su ./Core/Src/syscalls.cyclo ./Core/Src/syscalls.d ./Core/Src/syscalls.o ./Core/Src/syscalls.su ./Core/Src/sysmem.cyclo ./Core/Src/sysmem.d ./Core/Src/sysmem.o ./Core/Src/sysmem.su ./Core/Src/system_stm32f1xx.cyclo ./Core/Src/system_stm32f1xx.d ./Core/Src/system_stm32f1xx.o ./Core/Src/system_stm32f1xx.su
 
 .PHONY: clean-Core-2f-Src
 

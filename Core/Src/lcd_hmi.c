@@ -10,6 +10,21 @@
 #define HOME_RETURN_TIME  4000
 
 /*
+ * Reverse-orientation indicator icon (IA 0x6A on the DWIN).
+ * Written whenever reverse mode toggles, using the same lcd_set_icon
+ * primitive as every other icon so the byte stream is identical to the
+ * proven test packet: {5A A5 05 82 00 6A 00 IS}  (IS 1=reversed, 0=normal)
+ *
+ * WARNING: word address 0x6A is ALSO used as comboHeightVP[0] (the
+ * height field on the GoBack+HeightDn page). They share the same DWIN
+ * VP word. That is fine as long as no height write happens while the
+ * reverse icon is meant to be showing (they live on different pages),
+ * but if the reverse icon ever reverts unexpectedly, this collision is
+ * the reason — move one of them to a free address.
+ */
+#define IA_REVERSE  0x6A
+
+/*
  * GoBack+Accept feature access flags.
  * These indexes match featureEnable[] / featureVP[] order below.
  * When a flag is OFF the related page/function is blocked from the UI.
@@ -72,7 +87,9 @@ static uint8_t  animActive = 0;
 static uint8_t  animCmd    = 0;
 static uint32_t animTick   = 0;
 
-static uint8_t reverseMode = 0;
+/* Reverse orientation state (0 = normal, 1 = reversed).
+ * Exposed volatile so it can be watched in STM32CubeIDE Live Expressions. */
+static volatile uint8_t reverseMode = 0;
 static uint8_t lcdPowerOn  = 1;
 static uint8_t lcdLocked   = 0;
 
@@ -160,6 +177,7 @@ void LCD_HMI_Init(UART_HandleTypeDef *huart)
     lcdLocked   = 0;
     lcdPowerOn  = 1;
     homeActive  = 0;
+    reverseMode = 0;
 
     /* All feature pages are enabled by default at init.
      * The featureEnable[] array is already initialised to all-1 above,
@@ -245,6 +263,7 @@ void LCD_SetLock(uint8_t state)
 
 uint8_t LCD_IsLocked(void)  { return lcdLocked;  }
 uint8_t LCD_IsPowerOn(void) { return lcdPowerOn; }
+uint8_t LCD_IsReverse(void) { return reverseMode; }
 
 /* ======================================================================
  * Power
@@ -287,9 +306,20 @@ void LCD_TogglePower(void)
     }
 }
 
+/* ======================================================================
+ * Reverse orientation
+ * ------------------------------------------------------------------
+ * 2-state toggle. Each call flips reverseMode (so MapReverse swaps the
+ * motor/animation mapping) AND pushes the reverse indicator icon to the
+ * DWIN at IA 0x6A. This is the SINGLE place the reverse icon is written,
+ * so the button handler only has to call this one function.
+ *   press 1 -> reverseMode = 1 -> icon 0x6A = 1 (reversed)
+ *   press 2 -> reverseMode = 0 -> icon 0x6A = 0 (normal)
+ * ====================================================================== */
 void LCD_ToggleReverse(void)
 {
     reverseMode ^= 1;
+    lcd_set_icon(IA_REVERSE, reverseMode);   /* {5A A5 05 82 00 6A 00 IS} */
 }
 
 /* ======================================================================
@@ -321,6 +351,10 @@ void LCD_ShowStartupSequence(void)
         uiState = UI_HOME;
         lcd_force_page(PAGE_HOME);
     }
+
+    /* Restore the reverse indicator to its current state after the
+     * page cache was reset by the splash sequence. */
+    lcd_set_icon(IA_REVERSE, reverseMode);
 }
 
 /* ======================================================================

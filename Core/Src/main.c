@@ -5,7 +5,8 @@
   * @brief          : Main program body
   * @developer      : Amiya Krishna Gupta
   * @start_date     : 11 August 2025
-  * @updated        : Consolidated fix — relay + LCD both operational
+  * @updated        : Consolidated fix — relay + LCD both operational,
+  *                   2-state reverse toggle + DWIN RTC integration.
   ******************************************************************************
   */
 /* USER CODE END Header */
@@ -18,6 +19,7 @@
 #include "button_matrix.h"
 #include "action_comm.h"
 #include "sensor_manager.h"
+#include "rtc_manager.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -43,6 +45,24 @@ UART_HandleTypeDef huart2;
 UART_HandleTypeDef huart3;
 
 /* USER CODE BEGIN PV */
+
+/* ------------------------------------------------------------------
+ * Debug snapshot for STM32CubeIDE Live Expressions.
+ * Add "g_ctest" to the Live Expressions window to watch the RTC
+ * advance second-by-second and see the last reverse-icon value
+ * written to the DWIN.
+ * ------------------------------------------------------------------ */
+typedef struct
+{
+    RTC_Time_t rtc;          /* live software clock snapshot          */
+    uint8_t    reverse_icon; /* last IA 0x6A value pushed (0/1)       */
+} CTest_t;
+
+volatile CTest_t g_ctest = {0};
+
+/* Uncomment (or add REVERSE_RTC_SELFTEST to project symbols) to run
+ * the reverse + RTC self-test once at boot. Remove for production.   */
+//#define REVERSE_RTC_SELFTEST
 
 /* USER CODE END PV */
 
@@ -153,6 +173,66 @@ int main(void)
 
   LCD_ShowStartupSequence();
 
+  /* ----------------------------------------------------------------
+   * RTC bring-up. DWIN system VP 0x0010 is the RTC register, driven
+   * over the same DWIN UART (huart2). No hardware RTC chip is fitted,
+   * so the time is held in software and re-written every second by
+   * RTC_Tick() in the main loop.
+   *
+   * RTC_SetRandom() seeds a random valid start time so the clock is
+   * visibly advancing on the display right away. Swap for
+   * RTC_SetDateTime(yy,mm,dd,hh,mm,ss) once a real time source exists.
+   *
+   * NOTE (DWIN side): the .HMI project must have an RTC display control
+   * bound to VP 0x0010 on the page(s) that should show the clock.
+   * ---------------------------------------------------------------- */
+  RTC_Init(&huart2);
+  RTC_SetRandom();
+  /* --- Text box at VP 0x6A (spans 0x6A-0x6D = 8 bytes) --- */
+  /* Uppercase */
+  uint8_t tb1[14] = {0x5A,0xA5,0x0B,0x82,0x00,0x6A, 'R','E',' '};
+  HAL_UART_Transmit(&huart2, tb1, 14, HAL_MAX_DELAY);
+  HAL_Delay(1500);
+  /* Lowercase (padded with spaces to clear the box) */
+  uint8_t tb2[14] = {0x5A,0xA5,0x0B,0x82,0x00,0x6A, 'n','o','r',' '};
+  HAL_UART_Transmit(&huart2, tb2, 14, HAL_MAX_DELAY);
+  HAL_Delay(1500);
+  /* Digits */
+  uint8_t tb3[14] = {0x5A,0xA5,0x0B,0x82,0x00,0x6A, '1','2','3'};
+  HAL_UART_Transmit(&huart2, tb3, 14, HAL_MAX_DELAY);
+  HAL_Delay(1500);
+  /* Special characters */
+  uint8_t tb4[14] = {0x5A,0xA5,0x0B,0x82,0x00,0x6A, '!','@','#'};
+  HAL_UART_Transmit(&huart2, tb4, 14, HAL_MAX_DELAY);
+  HAL_Delay(1500);
+#ifdef REVERSE_RTC_SELFTEST
+  /* ================================================================
+   * REVERSE + RTC SELF-TEST  (line-by-line / Live Expressions)
+   * ----------------------------------------------------------------
+   * Set a breakpoint on the first line, step with F5/F10, watch the
+   * DWIN screen change and add "g_ctest" to Live Expressions.
+   * Delete or comment out REVERSE_RTC_SELFTEST for production builds.
+   * ================================================================ */
+
+  /* ---- Reverse indicator icon : IA 0x6A ----
+   * Exercise the REAL button path: LCD_ToggleReverse() flips the state
+   * and writes {5A A5 05 82 00 6A 00 IS} internally.                   */
+
+  LCD_ToggleReverse();                 /* reverse ENGAGED : icon 6A = 1 */
+  g_ctest.reverse_icon = LCD_IsReverse();
+  HAL_Delay(1500);
+
+  LCD_ToggleReverse();                 /* reverse NORMAL  : icon 6A = 0 */
+  g_ctest.reverse_icon = LCD_IsReverse();
+  HAL_Delay(1500);
+
+  /* ---- RTC on the LCD ----
+   * Visual walk-through: sets several times on VP 0x0010 and advances a
+   * live 10-second rollover. Watch the clock change on the display.     */
+  RTC_RunDisplayTest();
+  RTC_GetTime((RTC_Time_t *)&g_ctest.rtc);
+#endif /* REVERSE_RTC_SELFTEST */
+
   /* USER CODE END 2 */
 
   /* USER CODE BEGIN WHILE */
@@ -164,6 +244,8 @@ int main(void)
     BUTTON_MATRIX_Scan();
     Sensor_UpdateDisplay();
     LCD_Task();
+    RTC_Tick();                               /* advance + refresh clock 1x/sec */
+    RTC_GetTime((RTC_Time_t *)&g_ctest.rtc);  /* live snapshot for debugging    */
   }
   /* USER CODE END 3 */
 }

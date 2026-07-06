@@ -1,0 +1,12 @@
+../Core/Src/rtc_manager.c:27:16:RTC_IsLeap	16	static
+../Core/Src/rtc_manager.c:33:16:RTC_MonthLength	16	static
+../Core/Src/rtc_manager.c:40:16:RTC_ComputeWeekday	32	static
+../Core/Src/rtc_manager.c:57:13:RTC_Send	24	static
+../Core/Src/rtc_manager.c:75:6:RTC_Init	16	static
+../Core/Src/rtc_manager.c:84:6:RTC_SetDateTime	24	static
+../Core/Src/rtc_manager.c:99:6:RTC_SetRandom	32	static
+../Core/Src/rtc_manager.c:110:6:RTC_GetTime	16	static
+../Core/Src/rtc_manager.c:111:6:RTC_PushToDisplay	8	static
+../Core/Src/rtc_manager.c:116:13:RTC_Advance1s	16	static
+../Core/Src/rtc_manager.c:137:6:RTC_Tick	16	static
+../Core/Src/rtc_manager.c:161:6:RTC_RunDisplayTest	24	static
