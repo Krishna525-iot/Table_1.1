@@ -25,7 +25,7 @@ Core/Src/lcd_hmi.o: ../Core/Src/lcd_hmi.c ../Core/Inc/lcd_hmi.h \
  ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_pwr.h \
  ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_uart.h \
  ../Core/Inc/main.h ../Core/Inc/sensor_manager.h \
- ../Core/Inc/action_comm.h
+ ../Core/Inc/action_comm.h ../Core/Inc/main.h
 ../Core/Inc/lcd_hmi.h:
 ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal.h:
 ../Core/Inc/stm32f1xx_hal_conf.h:
@@ -55,3 +55,4 @@ Core/Src/lcd_hmi.o: ../Core/Src/lcd_hmi.c ../Core/Inc/lcd_hmi.h \
 ../Core/Inc/main.h:
 ../Core/Inc/sensor_manager.h:
 ../Core/Inc/action_comm.h:
+../Core/Inc/main.h:

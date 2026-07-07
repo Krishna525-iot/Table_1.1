@@ -1,5 +1,5 @@
 Core/Src/action_comm.o: ../Core/Src/action_comm.c \
- ../Core/Inc/action_comm.h \
+ ../Core/Inc/action_comm.h ../Core/Inc/main.h \
  ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal.h \
  ../Core/Inc/stm32f1xx_hal_conf.h \
  ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_rcc.h \
@@ -25,8 +25,9 @@ Core/Src/action_comm.o: ../Core/Src/action_comm.c \
  ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_i2c.h \
  ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_pwr.h \
  ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_uart.h \
- ../Core/Inc/sensor_manager.h
+ ../Core/Inc/sensor_manager.h ../Core/Inc/lcd_hmi.h
 ../Core/Inc/action_comm.h:
+../Core/Inc/main.h:
 ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal.h:
 ../Core/Inc/stm32f1xx_hal_conf.h:
 ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_rcc.h:
@@ -53,3 +54,4 @@ Core/Src/action_comm.o: ../Core/Src/action_comm.c \
 ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_pwr.h:
 ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_uart.h:
 ../Core/Inc/sensor_manager.h:
+../Core/Inc/lcd_hmi.h:

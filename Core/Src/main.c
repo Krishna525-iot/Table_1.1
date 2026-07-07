@@ -227,14 +227,14 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-    /* USER CODE END WHILE */
+      BUTTON_MATRIX_Scan();
+      Sensor_UpdateDisplay();
 
-    /* USER CODE BEGIN 3 */
-    BUTTON_MATRIX_Scan();
-    Sensor_UpdateDisplay();
-    LCD_Task();
-    RTC_Tick();                               /* advance + refresh clock 1x/sec */
-    RTC_GetTime((RTC_Time_t *)&g_ctest.rtc);  /* live snapshot for debugging    */
+      ACTION_COMM_Task();      /* IMPORTANT: process Bluetooth collision event */
+
+      LCD_Task();
+      RTC_Tick();
+      RTC_GetTime((RTC_Time_t *)&g_ctest.rtc);
   }
   /* USER CODE END 3 */
 }

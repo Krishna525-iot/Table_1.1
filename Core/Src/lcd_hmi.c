@@ -24,11 +24,9 @@
  */
 #define IA_REVERSE  0x6A
 
-/*
- * GoBack+Accept feature access flags.
- * These indexes match featureEnable[] / featureVP[] order below.
- * When a flag is OFF the related page/function is blocked from the UI.
- */
+#define IS_ANTI_NORMAL         0x00
+#define IS_ANTI_COLLISION      0x01
+
 #define LCD_FEATURE_BATTERY     0u
 #define LCD_FEATURE_GYRO        1u
 #define LCD_FEATURE_REALTIME    2u
@@ -96,7 +94,11 @@ static uint8_t lcdLocked   = 0;
 static uint8_t selFeature     = 0;
 static uint8_t selComboHeight = 0;
 static uint8_t selComboAccept = 0;
-
+/*
+ * Set only when collision page was opened by packet.
+ * This prevents non-collision packets from disturbing normal UI.
+ */
+static uint8_t collisionAlertActive = 0;
 /* ======================================================================
  * Memory state
  * ====================================================================== */
@@ -164,6 +166,8 @@ static void    LCD_DetailsMoveCursor(void);
 static uint8_t LCD_PageAllowed(uint8_t page);
 static uint8_t LCD_SetPageIfAllowed(uint8_t page);
 static void    LCD_CloseCurrentPageIfDisabled(void);
+static void    LCD_ClearCollisionAlertState(void);
+static void    LCD_OpenAntiCollisionPage(uint8_t openedByPacket);
 
 /* ======================================================================
  * Init
@@ -305,7 +309,6 @@ void LCD_TogglePower(void)
         RELAY_SET(0);                   /* cut power AFTER page is visible  */
     }
 }
-
 /* ======================================================================
  * Reverse orientation
  * ------------------------------------------------------------------
@@ -316,6 +319,10 @@ void LCD_TogglePower(void)
  *   press 1 -> reverseMode = 1 -> icon 0x6A = 1 (reversed)
  *   press 2 -> reverseMode = 0 -> icon 0x6A = 0 (normal)
  * ====================================================================== */
+static void LCD_ClearCollisionAlertState(void)
+{
+    collisionAlertActive = 0;
+}
 void LCD_ToggleReverse(void)
 {
     reverseMode ^= 1;
@@ -408,7 +415,109 @@ static uint8_t LCD_FeatureEnabled(uint8_t index)
     if(index >= ACCEPT_FIELD_COUNT) return 0;
     return featureEnable[index] ? 1u : 0u;
 }
+uint8_t LCD_IsAntiCollisionEnabled(void)
+{
+    return LCD_FeatureEnabled(LCD_FEATURE_COLLISION);
+}
 
+uint8_t LCD_IsCollisionAlertActive(void)
+{
+    return collisionAlertActive ? 1u : 0u;
+}
+static void LCD_OpenAntiCollisionPage(uint8_t openedByPacket)
+{
+    /*
+     * This is the SAME entry path as:
+     * Setting -> Anti Collision.
+     *
+     * PAGE_SETTING_ANTI = PA 23 / 0x17
+     * IA_ANTI_CURSOR    = IA 0x58
+     */
+    if (!LCD_PageAllowed(PAGE_SETTING_ANTI))
+        return;
+
+    homeActive = 0;
+    animActive = 0;
+
+    selSetting  = 2;                  /* Setting selector item: Anti */
+    uiState     = UI_SETTING_ANTI;
+    parentState = UI_SETTING;
+
+    if (openedByPacket)
+    {
+        collisionAlertActive = 1;
+
+        /*
+         * Force page load for packet-triggered alert.
+         * This avoids DWIN page-cache issue when currentPage already equals 0x17.
+         */
+        lcd_force_page(PAGE_SETTING_ANTI);
+
+        /*
+         * Collision alert icon/state on Anti page.
+         * Packet sent:
+         * 5A A5 05 82 00 58 00 01
+         */
+        lcd_set_icon(IA_ANTI_CURSOR, IS_ANTI_COLLISION);
+    }
+    else
+    {
+        collisionAlertActive = 0;
+
+        /*
+         * Normal manual opening from Setting menu.
+         * Keep it clean/normal.
+         */
+        lcd_set_page(PAGE_SETTING_ANTI);
+        lcd_set_icon(IA_ANTI_CURSOR, IS_ANTI_NORMAL);
+    }
+}
+
+void LCD_ShowCollisionAlert(uint8_t collision)
+{
+    if (!lcdPowerOn || lcdLocked)
+        return;
+
+    /*
+     * Anti Collision is GoBack+Accept feature index 3.
+     * If disabled, ignore collision packet and do not disturb UI.
+     */
+    if (!LCD_FeatureEnabled(LCD_FEATURE_COLLISION))
+    {
+        LCD_ClearCollisionAlertState();
+        return;
+    }
+
+    if (collision)
+    {
+        LCD_OpenAntiCollisionPage(1);
+    }
+    else
+    {
+        /*
+         * Non-collision packet should clear only packet-opened alert
+         * and come back to HOME page.
+         */
+        if (collisionAlertActive)
+        {
+            LCD_ClearCollisionAlertState();
+
+            /*
+             * Clear Anti icon before leaving the page.
+             * Packet sent:
+             * 5A A5 05 82 00 58 00 00
+             */
+            lcd_set_icon(IA_ANTI_CURSOR, IS_ANTI_NORMAL);
+
+            uiState     = UI_HOME;
+            parentState = UI_HOME;
+            homeActive  = 0;
+            animActive  = 0;
+
+            lcd_force_page(PAGE_HOME);
+        }
+    }
+}
 /* Maps a details-page cursor row index to its required feature flag. */
 static uint8_t LCD_DetailsItemAllowed(uint8_t item)
 {
@@ -502,10 +611,17 @@ static void LCD_CloseCurrentPageIfDisabled(void)
 
     homeActive = 0;
     animActive = 0;
-    uiState    = UI_HOME;
-    lcd_set_page(PAGE_HOME);
-}
 
+    if(collisionAlertActive)
+        lcd_set_icon(IA_ANTI_CURSOR, IS_ANTI_NORMAL);
+
+    LCD_ClearCollisionAlertState();
+
+    uiState     = UI_HOME;
+    parentState = UI_HOME;
+
+    lcd_force_page(PAGE_HOME);
+}
 /* ======================================================================
  * Seed helpers
  * ====================================================================== */
@@ -613,10 +729,38 @@ void LCD_HandleKey(uint8_t cmd)
                 break;
 
             case UI_SETTING_CLOCK:
-            case UI_SETTING_ANTI:
                 uiState = UI_SETTING;
                 lcd_set_page(PAGE_SETTING);
                 lcd_set_icon(IA_SETTING, selSetting);
+                break;
+
+            case UI_SETTING_ANTI:
+                /*
+                 * If page 23 was opened by collision packet,
+                 * GoBack clears alert and returns HOME.
+                 *
+                 * If page 23 was opened normally from Setting,
+                 * GoBack returns to Setting page.
+                 */
+                if (collisionAlertActive)
+                {
+                    LCD_ClearCollisionAlertState();
+                    lcd_set_icon(IA_ANTI_CURSOR, IS_ANTI_NORMAL);
+
+                    uiState     = UI_HOME;
+                    parentState = UI_HOME;
+                    homeActive  = 0;
+                    animActive  = 0;
+
+                    lcd_force_page(PAGE_HOME);
+                }
+                else
+                {
+                    uiState     = UI_SETTING;
+                    parentState = UI_HOME;
+                    lcd_set_page(PAGE_SETTING);
+                    lcd_set_icon(IA_SETTING, selSetting);
+                }
                 break;
 
             case UI_SETTING:
@@ -785,8 +929,7 @@ void LCD_HandleKey(uint8_t cmd)
                 case 2:
                     /* Anti-collision page gated by COLLISION feature flag */
                     if(!LCD_FeatureEnabled(LCD_FEATURE_COLLISION)) break;
-                    uiState = UI_SETTING_ANTI; parentState = UI_SETTING;
-                    if(!LCD_SetPageIfAllowed(PAGE_SETTING_ANTI)) return;
+                    LCD_OpenAntiCollisionPage(0);   /* same page 23 normal flow */
                     break;
                 default: break;
             }

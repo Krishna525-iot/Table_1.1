@@ -197,7 +197,9 @@ typedef enum
     UI_COMBO_ACCEPT,
     UI_MEMORY
 } UI_State_t;
-
+uint8_t LCD_IsAntiCollisionEnabled(void);
+uint8_t LCD_IsCollisionAlertActive(void);
+void LCD_ShowCollisionAlert(uint8_t collision);
 /* ======================================================================
  * Public API
  * ====================================================================== */
@@ -258,5 +260,6 @@ void    lcd_set_page(uint8_t page);
 void    lcd_set_icon(uint8_t vp, uint8_t value);
 void    lcd_set_state_value(uint8_t vp, uint8_t value);
 void    lcd_set_state_value16(uint8_t vp, uint16_t value);
-
+uint8_t LCD_IsAntiCollisionEnabled(void);
+void LCD_ShowCollisionAlert(uint8_t collision);
 #endif /* LCD_HMI_H */
