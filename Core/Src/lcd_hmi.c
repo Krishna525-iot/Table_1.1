@@ -24,15 +24,23 @@
  */
 #define IA_REVERSE  0x6A
 
+/* Anti-collision icon (IA 0x58 on page 23).
+ *   IS_ANTI_NORMAL    (0): no collision / normal
+ *   IS_ANTI_COLLISION (1): collision alert active */
 #define IS_ANTI_NORMAL         0x00
-#define IS_ANTI_COLLISION      0x01
+#define IS_ANTI_COLLISION      0x00
 
 /* DWIN needs time to finish rendering a freshly-loaded page before it
  * will accept a VP/icon write on it. A write sent too soon is dropped.
- * 50 ms is enough for a settings page; raise toward 100 if the icon
- * still misses on the first collision after a page change. */
+ * The collision open sends page + icon, then re-asserts the icon a few
+ * times spaced by this delay so the render can't blank it. */
 #define ANTI_PAGE_SETTLE_MS   50
 
+/*
+ * GoBack+Accept feature access flags.
+ * These indexes match featureEnable[] / featureVP[] order below.
+ * When a flag is OFF the related page/function is blocked from the UI.
+ */
 #define LCD_FEATURE_BATTERY     0u
 #define LCD_FEATURE_GYRO        1u
 #define LCD_FEATURE_REALTIME    2u
@@ -97,14 +105,15 @@ static volatile uint8_t reverseMode = 0;
 static uint8_t lcdPowerOn  = 1;
 static uint8_t lcdLocked   = 0;
 
+/* Set only when the anti-collision page was opened by a BLE collision
+ * packet. Guards the packet-driven clear/refresh so a manual open from
+ * the Setting menu is never disturbed by collision handling. */
+static uint8_t collisionAlertActive = 0;
+
 static uint8_t selFeature     = 0;
 static uint8_t selComboHeight = 0;
 static uint8_t selComboAccept = 0;
-/*
- * Set only when collision page was opened by packet.
- * This prevents non-collision packets from disturbing normal UI.
- */
-static uint8_t collisionAlertActive = 0;
+
 /* ======================================================================
  * Memory state
  * ====================================================================== */
@@ -152,6 +161,14 @@ static uint32_t homeTimer  = 0;
 static uint8_t  homeActive = 0;
 
 /* ======================================================================
+ * Collision diagnostics — watch in STM32CubeIDE Live Expressions.
+ *   dbg_lcd_anti_icon_reasserted : ++ each icon re-assert from refresh
+ *   dbg_lcd_anti_open_count      : ++ each packet-triggered page open
+ * ====================================================================== */
+volatile uint32_t dbg_lcd_anti_icon_reasserted = 0;
+volatile uint32_t dbg_lcd_anti_open_count      = 0;
+
+/* ======================================================================
  * Forward declarations
  * ====================================================================== */
 static void    LCD_RTP1_Seed(void);
@@ -172,16 +189,7 @@ static void    LCD_DetailsMoveCursor(void);
 static uint8_t LCD_PageAllowed(uint8_t page);
 static uint8_t LCD_SetPageIfAllowed(uint8_t page);
 static void    LCD_CloseCurrentPageIfDisabled(void);
-static void    LCD_ClearCollisionAlertState(void);
-static void    LCD_OpenAntiCollisionPage(uint8_t openedByPacket);
-/* Diagnostics for the collision re-assert:
- *   dbg_lcd_anti_icon_reasserted : ++ when we re-wrote the icon on page 23
- *   dbg_lcd_anti_page_restored   : ++ when something had moved us OFF page 23
- * If page_restored climbs -> another subsystem is changing the page.
- * If only icon_reasserted climbs -> the page stays, something blanks the icon
- * (typical DWIN re-render on the 1 Hz RTC write). */
-volatile uint32_t dbg_lcd_anti_icon_reasserted = 0;
-volatile uint32_t dbg_lcd_anti_page_restored   = 0;
+
 /* ======================================================================
  * Init
  * ====================================================================== */
@@ -195,6 +203,7 @@ void LCD_HMI_Init(UART_HandleTypeDef *huart)
     lcdPowerOn  = 1;
     homeActive  = 0;
     reverseMode = 0;
+    collisionAlertActive = 0;
 
     /* All feature pages are enabled by default at init.
      * The featureEnable[] array is already initialised to all-1 above,
@@ -257,6 +266,7 @@ void LCD_SetLock(uint8_t state)
         lcdLocked  = 1;
         homeActive = 0;
         animActive = 0;
+        collisionAlertActive = 0;   /* drop any live alert while locked */
 
         lcd_set_page(PAGE_LOCK);
         lcd_set_icon(IA_LOCK, IS_LOCKED);
@@ -268,6 +278,7 @@ void LCD_SetLock(uint8_t state)
 
         lcdLocked  = 0;
         uiState    = UI_HOME;
+        collisionAlertActive = 0;   /* re-arm: next 0x16 re-opens the alert */
 
         /* FIX: reset home timer on unlock so a stale pre-lock
          * motor countdown does not fire the moment the screen unlocks. */
@@ -313,6 +324,7 @@ void LCD_TogglePower(void)
         /* ---- POWER OFF ---- */
         homeActive = 0;
         animActive = 0;
+        collisionAlertActive = 0;       /* clear alert state on power down   */
         ACTION_SendCommand(0x00);       /* stop any active motor            */
 
         /* Show Thank-You page so user sees a clean shutdown               */
@@ -322,6 +334,7 @@ void LCD_TogglePower(void)
         RELAY_SET(0);                   /* cut power AFTER page is visible  */
     }
 }
+
 /* ======================================================================
  * Reverse orientation
  * ------------------------------------------------------------------
@@ -332,16 +345,126 @@ void LCD_TogglePower(void)
  *   press 1 -> reverseMode = 1 -> icon 0x6A = 1 (reversed)
  *   press 2 -> reverseMode = 0 -> icon 0x6A = 0 (normal)
  * ====================================================================== */
-static void LCD_ClearCollisionAlertState(void)
-{
-    collisionAlertActive = 0;
-}
 void LCD_ToggleReverse(void)
 {
     reverseMode ^= 1;
     lcd_set_icon(IA_REVERSE, reverseMode);   /* {5A A5 05 82 00 6A 00 IS} */
 }
 
+/* ======================================================================
+ * Feature-enable query (public: used by action_comm collision gating)
+ * ====================================================================== */
+uint8_t LCD_IsAntiCollisionEnabled(void)
+{
+    return LCD_FeatureEnabled(LCD_FEATURE_COLLISION);
+}
+
+uint8_t LCD_IsCollisionAlertActive(void)
+{
+    return collisionAlertActive ? 1u : 0u;
+}
+
+/* ======================================================================
+ * LCD_ShowCollisionAlert
+ * ------------------------------------------------------------------
+ * Driven from the main loop (ACTION_COMM_Task) on the BLE collision flag
+ * edge decoded from the 43 47 status packet.
+ *
+ *   collision = 1 (0x16 packet): open the anti-collision page (PA 23 /
+ *               0x17) — the SAME page Setting->Anti opens — and push the
+ *               collision icon (0x58 = 1). Page command and icon are sent
+ *               back-to-back, then the icon is re-asserted across the
+ *               render window so the DWIN default redraw can't blank it.
+ *
+ *   collision = 0 (0x15 packet): if the alert was packet-opened, clear the
+ *               icon (0x58 = 0) and return HOME.
+ *
+ * If the anti-collision feature is OFF (GoBack+Accept position 4) the
+ * packet is ignored and the bed keeps working normally.
+ * Main-loop context -> HAL_Delay is safe.
+ * ====================================================================== */
+void LCD_ShowCollisionAlert(uint8_t collision)
+{
+    if(!lcdPowerOn || lcdLocked) return;
+
+    if(!LCD_FeatureEnabled(LCD_FEATURE_COLLISION))
+    {
+        collisionAlertActive = 0;
+        return;
+    }
+
+    if(collision)
+    {
+        collisionAlertActive = 1;
+        homeActive  = 0;
+        animActive  = 0;
+        selSetting  = 2;
+
+        uiState     = UI_SETTING_ANTI;
+        parentState = UI_SETTING;
+
+        /* Force anti-collision page */
+        if(lcd_uart != NULL)
+        {
+            uint8_t page23[10] =
+            {
+                0x5A, 0xA5, 0x07, 0x82,
+                0x00, 0x84, 0x5A, 0x01,
+                0x00, PAGE_SETTING_ANTI
+            };
+
+            HAL_UART_Transmit(lcd_uart, page23, 10, HAL_MAX_DELAY);
+            currentPage = PAGE_SETTING_ANTI;
+
+            HAL_Delay(80);
+
+            /* Now write collision icon */
+            lcd_set_icon(IA_ANTI_CURSOR, IS_ANTI_COLLISION);
+
+            HAL_Delay(80);
+
+            /* Re-write once because DWIN sometimes redraws page after load */
+            lcd_set_icon(IA_ANTI_CURSOR, IS_ANTI_COLLISION);
+        }
+    }
+    else
+    {
+        if(collisionAlertActive)
+        {
+            collisionAlertActive = 0;
+            selSetting = 0;
+            /* Clear/normal icon before leaving page */
+            lcd_set_icon(IA_ANTI_CURSOR, IS_ANTI_NORMAL);
+
+            uiState     = UI_HOME;
+            parentState = UI_HOME;
+            homeActive  = 0;
+            animActive  = 0;
+
+            if(lcd_uart != NULL)
+            {
+                uint8_t pageHome[10] =
+                {
+                    0x5A, 0xA5, 0x07, 0x82,
+                    0x00, 0x84, 0x5A, 0x01,
+                    0x00, PAGE_HOME
+                };
+
+                HAL_UART_Transmit(lcd_uart, pageHome, 10, HAL_MAX_DELAY);
+                currentPage = PAGE_HOME;
+            }
+        }
+    }
+}
+void LCD_CollisionAlertRefresh(void)
+{
+    if(!lcdPowerOn || lcdLocked)                    return;
+    if(!collisionAlertActive)                       return;
+    if(!LCD_FeatureEnabled(LCD_FEATURE_COLLISION))  return;
+
+    dbg_lcd_anti_icon_reasserted++;
+    lcd_set_icon(IA_ANTI_CURSOR, IS_ANTI_COLLISION);   /* re-assert with the SAME value */
+}
 /* ======================================================================
  * Startup
  * ------------------------------------------------------------------
@@ -353,6 +476,7 @@ void LCD_ShowStartupSequence(void)
 {
     homeActive = 0;
     animActive = 0;
+    collisionAlertActive = 0;   /* fresh start: no stale alert after (re)boot */
 
     /* Logo / splash sequence */
     lcd_force_page(0x01); HAL_Delay(300);
@@ -428,131 +552,7 @@ static uint8_t LCD_FeatureEnabled(uint8_t index)
     if(index >= ACCEPT_FIELD_COUNT) return 0;
     return featureEnable[index] ? 1u : 0u;
 }
-uint8_t LCD_IsAntiCollisionEnabled(void)
-{
-    return LCD_FeatureEnabled(LCD_FEATURE_COLLISION);
-}
 
-uint8_t LCD_IsCollisionAlertActive(void)
-{
-    return collisionAlertActive ? 1u : 0u;
-}
-static void LCD_OpenAntiCollisionPage(uint8_t openedByPacket)
-{
-    /*
-     * SAME entry path as Setting -> Anti Collision.
-     *   PAGE_SETTING_ANTI = PA 23 / 0x17
-     *   IA_ANTI_CURSOR    = IA 0x58
-     *
-     * Page command and icon packet are sent TOGETHER here: the page load
-     * {5A A5 07 82 00 84 5A 01 00 17} is immediately followed by the icon
-     * {5A A5 05 82 00 58 00 01}. The icon is then re-asserted a few times
-     * across the render window so the DWIN's default redraw (icon=0) can't
-     * leave it blank. Main-loop context -> HAL_Delay is safe.
-     */
-    if (!LCD_PageAllowed(PAGE_SETTING_ANTI))
-        return;
-
-    homeActive = 0;
-    animActive = 0;
-
-    selSetting  = 2;                  /* Setting selector item: Anti */
-    uiState     = UI_SETTING_ANTI;
-    parentState = UI_SETTING;
-
-    if (openedByPacket)
-    {
-        collisionAlertActive = 1;
-
-        /* --- page + icon, sent together --- */
-        lcd_force_page(PAGE_SETTING_ANTI);              /* 5A A5 07 82 00 84 5A 01 00 17 */
-        lcd_set_icon(IA_ANTI_CURSOR, IS_ANTI_COLLISION);/* 5A A5 05 82 00 58 00 01       */
-
-        /* Re-assert the icon across the page-render window so the DWIN's
-         * default redraw (icon = 0) cannot blank it. 3 writes over ~150 ms
-         * covers the render without a visible reload (no page command). */
-        for(uint8_t i = 0; i < 3; i++)
-        {
-            HAL_Delay(ANTI_PAGE_SETTLE_MS);
-            lcd_set_icon(IA_ANTI_CURSOR, IS_ANTI_COLLISION);
-        }
-    }
-    else
-    {
-        collisionAlertActive = 0;
-
-        /* Manual open from Setting menu: page + normal icon (0x58 = 0). */
-        lcd_force_page(PAGE_SETTING_ANTI);
-        lcd_set_icon(IA_ANTI_CURSOR, IS_ANTI_NORMAL);
-
-        for(uint8_t i = 0; i < 3; i++)
-        {
-            HAL_Delay(ANTI_PAGE_SETTLE_MS);
-            lcd_set_icon(IA_ANTI_CURSOR, IS_ANTI_NORMAL);
-        }
-    }
-}
-
-
-void LCD_ShowCollisionAlert(uint8_t collision)
-{
-    if (!lcdPowerOn || lcdLocked)
-        return;
-
-    /*
-     * Anti Collision is GoBack+Accept feature index 3.
-     * If disabled, ignore collision packet and do not disturb UI.
-     */
-    if (!LCD_FeatureEnabled(LCD_FEATURE_COLLISION))
-    {
-        LCD_ClearCollisionAlertState();
-        return;
-    }
-
-    if (collision)
-    {
-        LCD_OpenAntiCollisionPage(1);
-    }
-    else
-    {
-        /*
-         * Non-collision packet should clear only packet-opened alert
-         * and come back to HOME page.
-         */
-        if (collisionAlertActive)
-        {
-            LCD_ClearCollisionAlertState();
-
-            /*
-             * Clear Anti icon before leaving the page.
-             * Packet sent:
-             * 5A A5 05 82 00 58 00 00
-             */
-            lcd_set_icon(IA_ANTI_CURSOR, IS_ANTI_NORMAL);
-
-            uiState     = UI_HOME;
-            parentState = UI_HOME;
-            homeActive  = 0;
-            animActive  = 0;
-
-            lcd_force_page(PAGE_HOME);
-        }
-    }
-}
-
-void LCD_CollisionAlertRefresh(void)
-{
-    if(!lcdPowerOn || lcdLocked)                    return;
-    if(!collisionAlertActive)                       return;
-    if(!LCD_FeatureEnabled(LCD_FEATURE_COLLISION))  return;
-
-    /* Icon-only re-assert. NEVER re-force the page here — that is what
-     * caused the "icon shows then page reloads" flicker. Re-sending the
-     * 0x58 icon packet keeps the collision icon alive against any DWIN
-     * redraw (e.g. the 1 Hz RTC write) without reloading the page. */
-    dbg_lcd_anti_icon_reasserted++;
-    lcd_set_icon(IA_ANTI_CURSOR, IS_ANTI_COLLISION);   /* 5A A5 05 82 00 58 00 01 */
-}
 /* Maps a details-page cursor row index to its required feature flag. */
 static uint8_t LCD_DetailsItemAllowed(uint8_t item)
 {
@@ -648,15 +648,15 @@ static void LCD_CloseCurrentPageIfDisabled(void)
     animActive = 0;
 
     if(collisionAlertActive)
+    {
         lcd_set_icon(IA_ANTI_CURSOR, IS_ANTI_NORMAL);
+        collisionAlertActive = 0;
+    }
 
-    LCD_ClearCollisionAlertState();
-
-    uiState     = UI_HOME;
-    parentState = UI_HOME;
-
-    lcd_force_page(PAGE_HOME);
+    uiState    = UI_HOME;
+    lcd_set_page(PAGE_HOME);
 }
+
 /* ======================================================================
  * Seed helpers
  * ====================================================================== */
@@ -771,15 +771,12 @@ void LCD_HandleKey(uint8_t cmd)
 
             case UI_SETTING_ANTI:
                 /*
-                 * If page 23 was opened by collision packet,
-                 * GoBack clears alert and returns HOME.
-                 *
-                 * If page 23 was opened normally from Setting,
-                 * GoBack returns to Setting page.
+                 * Packet-opened alert -> GoBack clears it and returns HOME.
+                 * Manually opened     -> GoBack returns to the Setting page.
                  */
-                if (collisionAlertActive)
+                if(collisionAlertActive)
                 {
-                    LCD_ClearCollisionAlertState();
+                    collisionAlertActive = 0;
                     lcd_set_icon(IA_ANTI_CURSOR, IS_ANTI_NORMAL);
 
                     uiState     = UI_HOME;
@@ -791,8 +788,7 @@ void LCD_HandleKey(uint8_t cmd)
                 }
                 else
                 {
-                    uiState     = UI_SETTING;
-                    parentState = UI_HOME;
+                    uiState = UI_SETTING;
                     lcd_set_page(PAGE_SETTING);
                     lcd_set_icon(IA_SETTING, selSetting);
                 }
@@ -962,9 +958,14 @@ void LCD_HandleKey(uint8_t cmd)
                     lcd_set_icon(IA_BATTERY, batteryLevel);
                     break;
                 case 2:
-                    /* Anti-collision page gated by COLLISION feature flag */
+                    /* Anti-collision page gated by COLLISION feature flag.
+                     * Manual open: NOT a packet, so collisionAlertActive
+                     * stays 0 and the normal icon is shown. */
                     if(!LCD_FeatureEnabled(LCD_FEATURE_COLLISION)) break;
-                    LCD_OpenAntiCollisionPage(0);   /* same page 23 normal flow */
+                    collisionAlertActive = 0;
+                    uiState = UI_SETTING_ANTI; parentState = UI_SETTING;
+                    if(!LCD_SetPageIfAllowed(PAGE_SETTING_ANTI)) return;
+                    lcd_set_icon(IA_ANTI_CURSOR, IS_ANTI_NORMAL);
                     break;
                 default: break;
             }
@@ -1308,7 +1309,7 @@ void LCD_ShowSensorPage(uint8_t page)
             uiState    = UI_SETTING;
             selSetting = 0;
             lcd_set_page(page);
-            lcd_set_icon(IA_SETTING, 0);
+            lcd_set_icon(IA_SETTING, 1);
             break;
 
         default:

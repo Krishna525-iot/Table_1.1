@@ -222,7 +222,72 @@ int main(void)
 #endif /* REVERSE_RTC_SELFTEST */
 
   /* USER CODE END 2 */
-
+  /* ============================================================
+   * ANTI-COLLISION PAGE + ICON  —  RAW BENCH TEST
+   * Page 23 = PA 0x17 , Icon = IA 0x58 (1=collision, 0=normal)
+   * Each step held so you can watch the DWIN. Remove after test.
+   * ============================================================ */
+//
+//  /* ---- TEST 1: page then icon, back-to-back (no delay) ---- */
+//  {
+//      uint8_t page23[10] = {0x5A,0xA5,0x07,0x82,0x00,0x84,0x5A,0x01,0x00,0x17};
+//      HAL_UART_Transmit(&huart2, page23, 10, HAL_MAX_DELAY);
+//      uint8_t iconOn[8]  = {0x5A,0xA5,0x05,0x82,0x00,0x58,0x00,0x01};
+//      HAL_UART_Transmit(&huart2, iconOn, 8, HAL_MAX_DELAY);
+//      HAL_Delay(3000);   /* look: is the collision icon showing? */
+//  }
+//
+//  /* ---- TEST 2: page, SETTLE, then icon (settle-after-page) ---- */
+//  {
+//      uint8_t page23[10] = {0x5A,0xA5,0x07,0x82,0x00,0x84,0x5A,0x01,0x00,0x17};
+//      HAL_UART_Transmit(&huart2, page23, 10, HAL_MAX_DELAY);
+//      HAL_Delay(100);    /* let the page finish rendering */
+//      uint8_t iconOn[8]  = {0x5A,0xA5,0x05,0x82,0x00,0x58,0x00,0x01};
+//      HAL_UART_Transmit(&huart2, iconOn, 8, HAL_MAX_DELAY);
+//      HAL_Delay(3000);
+//  }
+//
+//  /* ---- TEST 3: icon OFF then ON on the same page (toggle) ---- */
+//  {
+//      uint8_t iconOff[8] = {0x5A,0xA5,0x05,0x82,0x00,0x58,0x00,0x00};
+//      HAL_UART_Transmit(&huart2, iconOff, 8, HAL_MAX_DELAY);
+//      HAL_Delay(1500);   /* normal icon */
+//      uint8_t iconOn[8]  = {0x5A,0xA5,0x05,0x82,0x00,0x58,0x00,0x01};
+//      HAL_UART_Transmit(&huart2, iconOn, 8, HAL_MAX_DELAY);
+//      HAL_Delay(3000);   /* collision icon */
+//  }
+//
+//  /* ---- TEST 4: hammer the icon (does it survive repeated writes?) ---- */
+//  {
+//      uint8_t page23[10] = {0x5A,0xA5,0x07,0x82,0x00,0x84,0x5A,0x01,0x00,0x17};
+//      HAL_UART_Transmit(&huart2, page23, 10, HAL_MAX_DELAY);
+//      HAL_Delay(100);
+//      for(int i = 0; i < 20; i++)   /* 20 writes over ~4s, page NOT re-sent */
+//      {
+//          uint8_t iconOn[8] = {0x5A,0xA5,0x05,0x82,0x00,0x58,0x00,0x01};
+//          HAL_UART_Transmit(&huart2, iconOn, 8, HAL_MAX_DELAY);
+//          HAL_Delay(200);
+//      }
+//  }
+//
+//  /* ---- TEST 5: try alternate icon 'value' byte position ----
+//   * Some DGUS icon controls are 16-bit: value in byte[7], others expect
+//   * the value in byte[6]. This sends value in the HIGH byte to check. */
+//  {
+//      uint8_t page23[10] = {0x5A,0xA5,0x07,0x82,0x00,0x84,0x5A,0x01,0x00,0x17};
+//      HAL_UART_Transmit(&huart2, page23, 10, HAL_MAX_DELAY);
+//      HAL_Delay(100);
+//      uint8_t iconHi[8] = {0x5A,0xA5,0x05,0x82,0x00,0x58,0x01,0x00}; /* value in byte[6] */
+//      HAL_UART_Transmit(&huart2, iconHi, 8, HAL_MAX_DELAY);
+//      HAL_Delay(3000);
+//  }
+//
+//  /* ---- return to HOME so the bench ends cleanly ---- */
+//  {
+//      uint8_t home[10] = {0x5A,0xA5,0x07,0x82,0x00,0x84,0x5A,0x01,0x00,0x04};
+//      HAL_UART_Transmit(&huart2, home, 10, HAL_MAX_DELAY);
+//      HAL_Delay(2000);
+//  }
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)

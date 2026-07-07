@@ -251,7 +251,7 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
 void ACTION_COMM_Task(void)
 {
     static uint8_t  lastCollision = 0;
-    static uint32_t lastRefresh   = 0;
+    static uint32_t refreshTick   = 0;
 
     dbg_ac_task_hit++;
 
@@ -263,17 +263,16 @@ void ACTION_COMM_Task(void)
     {
         lastCollision = now;
         dbg_ac_lcd_call++;
-        LCD_ShowCollisionAlert(now);      /* 1 = open+icon, 0 = clear+HOME */
-        lastRefresh = HAL_GetTick();
+        LCD_ShowCollisionAlert(now);      /* open/clear on edge */
+        refreshTick = HAL_GetTick();      /* reset so refresh waits after open */
     }
 
-    /* Hold the alert: keep icon on page 23 while collision is active. */
-    if(now)
+    /* Re-assert the icon at a slow 500 ms cadence — never in the same pass
+     * as the open, so it can't land during the page render, but still fast
+     * enough to beat the 1 Hz RTC redraw. */
+    if(now && (HAL_GetTick() - refreshTick) >= 500)
     {
-        if((HAL_GetTick() - lastRefresh) >= COLLISION_REFRESH_MS)
-        {
-            lastRefresh = HAL_GetTick();
-            LCD_CollisionAlertRefresh();
-        }
+        refreshTick = HAL_GetTick();
+        LCD_CollisionAlertRefresh();
     }
 }
