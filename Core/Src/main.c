@@ -217,7 +217,7 @@ int main(void)
   /* ---- RTC on the LCD ----
    * Visual walk-through: sets several times on VP 0x0010 and advances a
    * live 10-second rollover. Watch the clock change on the display.     */
-  RTC_RunDisplayTest();
+//  RTC_RunDisplayTest();
   RTC_GetTime((RTC_Time_t *)&g_ctest.rtc);
 #endif /* REVERSE_RTC_SELFTEST */
 
@@ -229,12 +229,12 @@ int main(void)
   {
       BUTTON_MATRIX_Scan();
       Sensor_UpdateDisplay();
-
-      ACTION_COMM_Task();      /* IMPORTANT: process Bluetooth collision event */
-
+      ACTION_COMM_Task();          /* edge detect: open/clear on transition */
       LCD_Task();
-      RTC_Tick();
+      RTC_Tick();                  /* RTC writes here (may blank the icon)  */
       RTC_GetTime((RTC_Time_t *)&g_ctest.rtc);
+
+      LCD_CollisionAlertRefresh(); /* LAST: re-assert icon so it wins the frame */
   }
   /* USER CODE END 3 */
 }

@@ -27,6 +27,12 @@
 #define IS_ANTI_NORMAL         0x00
 #define IS_ANTI_COLLISION      0x01
 
+/* DWIN needs time to finish rendering a freshly-loaded page before it
+ * will accept a VP/icon write on it. A write sent too soon is dropped.
+ * 50 ms is enough for a settings page; raise toward 100 if the icon
+ * still misses on the first collision after a page change. */
+#define ANTI_PAGE_SETTLE_MS   50
+
 #define LCD_FEATURE_BATTERY     0u
 #define LCD_FEATURE_GYRO        1u
 #define LCD_FEATURE_REALTIME    2u
@@ -168,7 +174,14 @@ static uint8_t LCD_SetPageIfAllowed(uint8_t page);
 static void    LCD_CloseCurrentPageIfDisabled(void);
 static void    LCD_ClearCollisionAlertState(void);
 static void    LCD_OpenAntiCollisionPage(uint8_t openedByPacket);
-
+/* Diagnostics for the collision re-assert:
+ *   dbg_lcd_anti_icon_reasserted : ++ when we re-wrote the icon on page 23
+ *   dbg_lcd_anti_page_restored   : ++ when something had moved us OFF page 23
+ * If page_restored climbs -> another subsystem is changing the page.
+ * If only icon_reasserted climbs -> the page stays, something blanks the icon
+ * (typical DWIN re-render on the 1 Hz RTC write). */
+volatile uint32_t dbg_lcd_anti_icon_reasserted = 0;
+volatile uint32_t dbg_lcd_anti_page_restored   = 0;
 /* ======================================================================
  * Init
  * ====================================================================== */
@@ -427,11 +440,15 @@ uint8_t LCD_IsCollisionAlertActive(void)
 static void LCD_OpenAntiCollisionPage(uint8_t openedByPacket)
 {
     /*
-     * This is the SAME entry path as:
-     * Setting -> Anti Collision.
+     * SAME entry path as Setting -> Anti Collision.
+     *   PAGE_SETTING_ANTI = PA 23 / 0x17
+     *   IA_ANTI_CURSOR    = IA 0x58
      *
-     * PAGE_SETTING_ANTI = PA 23 / 0x17
-     * IA_ANTI_CURSOR    = IA 0x58
+     * Page command and icon packet are sent TOGETHER here: the page load
+     * {5A A5 07 82 00 84 5A 01 00 17} is immediately followed by the icon
+     * {5A A5 05 82 00 58 00 01}. The icon is then re-asserted a few times
+     * across the render window so the DWIN's default redraw (icon=0) can't
+     * leave it blank. Main-loop context -> HAL_Delay is safe.
      */
     if (!LCD_PageAllowed(PAGE_SETTING_ANTI))
         return;
@@ -447,31 +464,35 @@ static void LCD_OpenAntiCollisionPage(uint8_t openedByPacket)
     {
         collisionAlertActive = 1;
 
-        /*
-         * Force page load for packet-triggered alert.
-         * This avoids DWIN page-cache issue when currentPage already equals 0x17.
-         */
-        lcd_force_page(PAGE_SETTING_ANTI);
+        /* --- page + icon, sent together --- */
+        lcd_force_page(PAGE_SETTING_ANTI);              /* 5A A5 07 82 00 84 5A 01 00 17 */
+        lcd_set_icon(IA_ANTI_CURSOR, IS_ANTI_COLLISION);/* 5A A5 05 82 00 58 00 01       */
 
-        /*
-         * Collision alert icon/state on Anti page.
-         * Packet sent:
-         * 5A A5 05 82 00 58 00 01
-         */
-        lcd_set_icon(IA_ANTI_CURSOR, IS_ANTI_COLLISION);
+        /* Re-assert the icon across the page-render window so the DWIN's
+         * default redraw (icon = 0) cannot blank it. 3 writes over ~150 ms
+         * covers the render without a visible reload (no page command). */
+        for(uint8_t i = 0; i < 3; i++)
+        {
+            HAL_Delay(ANTI_PAGE_SETTLE_MS);
+            lcd_set_icon(IA_ANTI_CURSOR, IS_ANTI_COLLISION);
+        }
     }
     else
     {
         collisionAlertActive = 0;
 
-        /*
-         * Normal manual opening from Setting menu.
-         * Keep it clean/normal.
-         */
-        lcd_set_page(PAGE_SETTING_ANTI);
+        /* Manual open from Setting menu: page + normal icon (0x58 = 0). */
+        lcd_force_page(PAGE_SETTING_ANTI);
         lcd_set_icon(IA_ANTI_CURSOR, IS_ANTI_NORMAL);
+
+        for(uint8_t i = 0; i < 3; i++)
+        {
+            HAL_Delay(ANTI_PAGE_SETTLE_MS);
+            lcd_set_icon(IA_ANTI_CURSOR, IS_ANTI_NORMAL);
+        }
     }
 }
+
 
 void LCD_ShowCollisionAlert(uint8_t collision)
 {
@@ -517,6 +538,20 @@ void LCD_ShowCollisionAlert(uint8_t collision)
             lcd_force_page(PAGE_HOME);
         }
     }
+}
+
+void LCD_CollisionAlertRefresh(void)
+{
+    if(!lcdPowerOn || lcdLocked)                    return;
+    if(!collisionAlertActive)                       return;
+    if(!LCD_FeatureEnabled(LCD_FEATURE_COLLISION))  return;
+
+    /* Icon-only re-assert. NEVER re-force the page here — that is what
+     * caused the "icon shows then page reloads" flicker. Re-sending the
+     * 0x58 icon packet keeps the collision icon alive against any DWIN
+     * redraw (e.g. the 1 Hz RTC write) without reloading the page. */
+    dbg_lcd_anti_icon_reasserted++;
+    lcd_set_icon(IA_ANTI_CURSOR, IS_ANTI_COLLISION);   /* 5A A5 05 82 00 58 00 01 */
 }
 /* Maps a details-page cursor row index to its required feature flag. */
 static uint8_t LCD_DetailsItemAllowed(uint8_t item)
@@ -1199,7 +1234,9 @@ void LCD_Task(void)
 {
     LCD_HandleCircularAnim();
 
-    if(homeActive && !Sensor_IsActive() && lcdPowerOn && !lcdLocked)
+    /* Do NOT auto-return home while a collision alert is being shown. */
+    if(homeActive && !Sensor_IsActive() && lcdPowerOn && !lcdLocked
+       && !collisionAlertActive)
     {
         if((HAL_GetTick() - homeTimer) >= HOME_RETURN_TIME)
         {

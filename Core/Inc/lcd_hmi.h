@@ -251,7 +251,7 @@ void    LCD_RefreshAcceptPage(const uint8_t *states);
 /* GoBack+FlexUp edit value API */
 void    LCD_UpdateEditValue(uint8_t index, uint16_t value);
 void    LCD_RefreshEditPage(const uint16_t *vals);
-
+void LCD_CollisionAlertRefresh(void);
 /* Memory slot saved-state API */
 void    LCD_UpdateMemorySlotState(uint8_t slot, uint8_t saved);
 

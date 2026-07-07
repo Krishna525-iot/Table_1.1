@@ -1,6 +1,6 @@
 #include "action_comm.h"
 #include "sensor_manager.h"
-#include "lcd_hmi.h"          /* LCD_ShowCollisionAlert / LCD_IsAntiCollisionEnabled */
+#include "lcd_hmi.h"
 #include <string.h>
 
 static UART_HandleTypeDef *uart_bt;
@@ -9,7 +9,7 @@ static UART_HandleTypeDef *uart_screen = NULL;
 
 #define PACKET_SIZE            16
 #define SENSOR_PACKET_SIZE     25
-#define COLLISION_PACKET_SIZE  21     /* 43 47 .. 4E = 21 bytes */
+#define COLLISION_PACKET_SIZE  21
 
 #define HEADER_BYTE1     0x43
 #define HEADER_SENSOR    0x47         /* sensor AND collision share this header */
@@ -17,8 +17,13 @@ static UART_HandleTypeDef *uart_screen = NULL;
 #define COLLISION_ALERT_TAG  0x16     /* byte[4] = 22 -> COLLISION */
 #define COLLISION_CLEAR_TAG  0x15     /* byte[4] = 21 -> NO collision */
 #define COLLISION_MARKER     0x0F     /* byte[17] structural marker */
-#define COLLISION_TAIL_A     0x4E     /* byte[20] tail (both frames) */
-#define COLLISION_TAIL_B     0x4F     /* tolerated for older revisions */
+#define COLLISION_TAIL_A     0x4E
+#define COLLISION_TAIL_B     0x4F
+
+/* Re-assert interval while a collision alert is held active. Must be
+ * well under the 1 Hz RTC write cadence so a DWIN re-render can't leave
+ * the icon blank between refreshes. */
+#define COLLISION_REFRESH_MS   300
 
 static const uint8_t basePacket[PACKET_SIZE] =
 {
@@ -44,32 +49,28 @@ static uint8_t pktBufAct[SENSOR_PACKET_SIZE];
 static uint8_t pktIdxAct   = 0;
 static uint8_t hdrStateAct = 0;
 
-/* ------------------------------------------------------------------
- * Collision flag: written ONLY in the RX ISR, consumed in the main
- * loop by ACTION_COMM_Task(). No UART / page work runs in the ISR.
- *   1 = collision (0x16 / 22)   0 = clear (0x15 / 21)
- * ------------------------------------------------------------------ */
 static volatile uint8_t g_collisionActive = 0;
 uint8_t ACTION_GetCollisionActive(void) { return g_collisionActive; }
 
-/* ===== DEBUG (declared extern in action_comm.h) — Live Expressions ===== */
-volatile uint8_t dbg_ac_packet_ok       = 0;  /* ++ per VALID collision frame   */
-volatile uint8_t dbg_ac_task_hit        = 0;  /* ++ per ACTION_COMM_Task() call */
-volatile uint8_t dbg_ac_lcd_call        = 0;  /* ++ per LCD alert call          */
-volatile uint8_t dbg_ac_state           = 0;  /* current collision flag 0/1     */
-volatile uint8_t dbg_ac_feature_enabled = 0;  /* anti-collision feature ON/OFF  */
-volatile uint8_t dbg_ac_last_packet[21] = {0};/* last VALID collision frame     */
+/* ===== DEBUG (declared extern in action_comm.h) ===== */
+volatile uint8_t dbg_ac_packet_ok       = 0;
+volatile uint8_t dbg_ac_task_hit        = 0;
+volatile uint8_t dbg_ac_lcd_call        = 0;
+volatile uint8_t dbg_ac_state           = 0;
+volatile uint8_t dbg_ac_feature_enabled = 0;
+volatile uint8_t dbg_ac_last_packet[21] = {0};
 
-/* optional RX counters */
 volatile uint32_t g_dbg_rx_bt    = 0, g_dbg_rx_act    = 0;
-volatile uint32_t g_dbg_sensor_ok = 0;         /* sensor frames parsed          */
-volatile uint32_t g_dbg_coll_bad = 0;          /* collision-shaped but invalid  */
+volatile uint32_t g_dbg_sensor_ok = 0;
+volatile uint32_t g_dbg_coll_bad = 0;
 
 /* ------------------------------------------------------------------
- * Returns 1 if the 21-byte window is a fully-valid collision frame.
- * This is the ONLY thing that separates a 21-byte collision frame
- * from a 25-byte sensor frame (both start 43 47, both can carry 0x15
- * at byte[4]). All three fields must match.
+ * Full collision signature — the ONLY reliable separator between a
+ * 21-byte collision frame and a 25-byte sensor frame (both start 43 47
+ * and a sensor frame also carries 0x15 at byte[4]).
+ *   byte[4]  : 0x15 / 0x16
+ *   byte[17] : 0x0F  (sensor frame has 0x02 here -> rejected)
+ *   byte[20] : 0x4E  (sensor frame has 0x43 here -> rejected)
  * ------------------------------------------------------------------ */
 static uint8_t IsCollisionSignature(const uint8_t *buf)
 {
@@ -79,11 +80,10 @@ static uint8_t IsCollisionSignature(const uint8_t *buf)
     return 1;
 }
 
-/* Apply a confirmed collision frame (signature already checked). */
 static void ApplyCollisionFrame(const uint8_t *buf)
 {
-    if(buf[4] == COLLISION_ALERT_TAG)      g_collisionActive = 1;   /* 0x16 */
-    else if(buf[4] == COLLISION_CLEAR_TAG) g_collisionActive = 0;   /* 0x15 */
+    if(buf[4] == COLLISION_ALERT_TAG)      g_collisionActive = 1;
+    else if(buf[4] == COLLISION_CLEAR_TAG) g_collisionActive = 0;
 
     for(uint8_t i = 0; i < COLLISION_PACKET_SIZE; i++)
         dbg_ac_last_packet[i] = buf[i];
@@ -152,7 +152,6 @@ void ACTION_SendGoBackLevel(void)
 
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
-    /* -------- BLE / primary link: 43 47 = sensor(25) OR collision(21) -------- */
     if (huart == uart_bt)
     {
         g_dbg_rx_bt++;
@@ -165,9 +164,9 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
                 break;
 
             case 1:
-                if(rxByte == HEADER_SENSOR)           /* 43 47 */
+                if(rxByte == HEADER_SENSOR)
                 { packetBuffer[1]=rxByte; packetIndex=2; headerState=2; }
-                else if(rxByte == HEADER_BYTE1)       /* stray 0x43: resync */
+                else if(rxByte == HEADER_BYTE1)
                 { packetBuffer[0]=rxByte; packetIndex=1; }
                 else
                 { headerState=0; packetIndex=0; }
@@ -177,20 +176,16 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
                 if(packetIndex < SENSOR_PACKET_SIZE) packetBuffer[packetIndex] = rxByte;
                 packetIndex++;
 
-                /* At 21 bytes, test the FULL collision signature. This is the
-                 * only reliable way to tell a 21-byte collision frame from a
-                 * 25-byte sensor frame — byte[4] alone is ambiguous because
-                 * sensor payload also carries 0x15 there. */
                 if(packetIndex == COLLISION_PACKET_SIZE)
                 {
                     if(IsCollisionSignature(packetBuffer))
                     {
-                        ApplyCollisionFrame(packetBuffer);   /* sets flag */
-                        packetIndex = 0; headerState = 0;    /* consume, re-hunt */
+                        ApplyCollisionFrame(packetBuffer);
+                        packetIndex = 0; headerState = 0;
                     }
-                    /* else: NOT collision -> keep reading to 25 as sensor */
+                    /* else: sensor frame -> keep reading to 25 */
                 }
-                else if(packetIndex >= SENSOR_PACKET_SIZE)   /* 25 bytes */
+                else if(packetIndex >= SENSOR_PACKET_SIZE)
                 {
                     Sensor_ParsePacket(&packetBuffer[2]);
                     g_dbg_sensor_ok++;
@@ -200,7 +195,6 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
         }
         HAL_UART_Receive_IT(uart_bt, &rxByte, 1);
     }
-    /* -------- wired action controller: 43 47 collision-only (21 bytes) -------- */
     else if (huart == uart_act)
     {
         g_dbg_rx_act++;
@@ -231,7 +225,6 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
                         ApplyCollisionFrame(pktBufAct);
                     else
                         g_dbg_coll_bad++;
-                    /* wired link is collision-only: reset either way */
                     pktIdxAct = 0; hdrStateAct = 0;
                 }
                 break;
@@ -250,17 +243,15 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
 
 /* ================= MAIN-LOOP TASK ================= */
 /*
- * ACTION_COMM_Task — called from while(1).
- * Edge-triggered: calls the LCD ONCE per 0->1 (collision) and 1->0 (clear)
- * transition, so it never spams the DWIN or fights manual navigation.
- *   flag 0 -> 1 (0x16) : LCD_ShowCollisionAlert(1) -> opens Anti page (PA 23)
- *   flag 1 -> 0 (0x15) : LCD_ShowCollisionAlert(0) -> clears alert, HOME
- * If anti-collision is OFF (GoBack+Accept #4) the LCD layer ignores it and
- * the bed keeps working normally.
+ * Edge-triggered open/clear PLUS a periodic re-assert while the alert is
+ * held active. The re-assert (every COLLISION_REFRESH_MS) re-writes the
+ * collision icon so a DWIN page re-render — e.g. the 1 Hz RTC write —
+ * cannot leave the icon blank. Flicker-free: same icon value each time.
  */
 void ACTION_COMM_Task(void)
 {
-    static uint8_t lastCollision = 0;
+    static uint8_t  lastCollision = 0;
+    static uint32_t lastRefresh   = 0;
 
     dbg_ac_task_hit++;
 
@@ -272,6 +263,17 @@ void ACTION_COMM_Task(void)
     {
         lastCollision = now;
         dbg_ac_lcd_call++;
-        LCD_ShowCollisionAlert(now);
+        LCD_ShowCollisionAlert(now);      /* 1 = open+icon, 0 = clear+HOME */
+        lastRefresh = HAL_GetTick();
+    }
+
+    /* Hold the alert: keep icon on page 23 while collision is active. */
+    if(now)
+    {
+        if((HAL_GetTick() - lastRefresh) >= COLLISION_REFRESH_MS)
+        {
+            lastRefresh = HAL_GetTick();
+            LCD_CollisionAlertRefresh();
+        }
     }
 }

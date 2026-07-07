@@ -1,5 +1,5 @@
 ../Core/Src/action_comm.c:53:9:ACTION_GetCollisionActive	1
-../Core/Src/action_comm.c:74:16:IsCollisionSignature	6
+../Core/Src/action_comm.c:75:16:IsCollisionSignature	6
 ../Core/Src/action_comm.c:83:13:ApplyCollisionFrame	4
 ../Core/Src/action_comm.c:95:6:ACTION_COMM_Init	3
 ../Core/Src/action_comm.c:107:6:ACTION_SetScreenUart	1
@@ -8,5 +8,5 @@
 ../Core/Src/action_comm.c:131:6:ACTION_SendMemory	5
 ../Core/Src/action_comm.c:142:6:ACTION_SendGoBackLevel	1
 ../Core/Src/action_comm.c:153:6:HAL_UART_RxCpltCallback	24
-../Core/Src/action_comm.c:243:6:HAL_UART_ErrorCallback	3
-../Core/Src/action_comm.c:261:6:ACTION_COMM_Task	2
+../Core/Src/action_comm.c:236:6:HAL_UART_ErrorCallback	3
+../Core/Src/action_comm.c:251:6:ACTION_COMM_Task	4
